@@ -48,6 +48,9 @@ class MainActivity : Activity() {
         scene.onAddWidgetRequested = ::pickWidget
         scene.onRemoveWidgetRequested = ::removeWidget
         scene.onBlurStrengthChanged = ::updateWindowBlur
+        scene.onParallaxEnabledChanged = { enabled ->
+            if (enabled) orientationTracker.recenter()
+        }
         setContentView(scene)
         restoreWidgets()
     }
@@ -99,8 +102,7 @@ class MainActivity : Activity() {
 
     private fun requestHomeRole() {
         if (isDefaultHome()) {
-            scene.setIsDefaultHome(true)
-            Toast.makeText(this, "Parallax Home is already your Home app", Toast.LENGTH_SHORT).show()
+            openHomeSettings("Choose your original launcher to restore it as the Home app")
             return
         }
 
@@ -122,7 +124,9 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun openHomeSettings() {
+    private fun openHomeSettings(
+        message: String = "In Default apps -> Home app, choose Parallax Home"
+    ) {
         val settingsIntents = listOf(
             Intent(Settings.ACTION_HOME_SETTINGS),
             Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS),
@@ -134,7 +138,7 @@ class MainActivity : Activity() {
             try {
                 Toast.makeText(
                     this,
-                    "In Default apps -> Home app, choose Parallax Home",
+                    message,
                     Toast.LENGTH_LONG
                 ).show()
                 startActivity(settingsIntent)
@@ -252,7 +256,7 @@ class MainActivity : Activity() {
 
     private fun updateWindowBlur(strength: Float) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val radius = (resources.displayMetrics.density * 42f * strength.coerceIn(0f, 1f)).toInt()
+            val radius = (resources.displayMetrics.density * 8f * strength.coerceIn(0f, 1f)).toInt()
             if (radius == lastWindowBlurRadius) return
             lastWindowBlurRadius = radius
             window.setBackgroundBlurRadius(radius)

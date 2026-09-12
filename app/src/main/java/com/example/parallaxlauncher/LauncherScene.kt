@@ -37,11 +37,13 @@ import kotlin.math.roundToInt
 class LauncherScene(context: Context) : FrameLayout(context), Choreographer.FrameCallback {
     companion object {
         private const val RECENTER_THRESHOLD_DEGREES = 15f
+        private const val BLUR_START_DEGREES = 10f
         private const val COMPENSATION_STRENGTH = 0.90f
         private const val MAX_UI_ROTATION_DEGREES = 42f
         private const val SMOOTHING_TIME_SECONDS = 0.15f
         private const val APP_PREFS = "launcher_apps"
         private const val APP_COMPONENTS_KEY = "selected_components"
+        private const val PARALLAX_ENABLED_KEY = "parallax_enabled"
     }
 
     var onRecenterRequested: () -> Unit = {}
@@ -50,6 +52,7 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
     var onAddWidgetRequested: () -> Unit = {}
     var onRemoveWidgetRequested: (Int) -> Unit = {}
     var onBlurStrengthChanged: (Float) -> Unit = {}
+    var onParallaxEnabledChanged: (Boolean) -> Unit = {}
 
     private val density = resources.displayMetrics.density
     private val atmosphere = AtmosphereView(context)
@@ -63,6 +66,9 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
     private val widgetViews = mutableMapOf<Int, View>()
     private var blurEffect: WholeScreenBlurEffectController? = null
     private lateinit var setHomeButton: TextView
+    private lateinit var effectButton: TextView
+    private var parallaxEnabled = context.getSharedPreferences(APP_PREFS, Context.MODE_PRIVATE)
+        .getBoolean(PARALLAX_ENABLED_KEY, true)
 
     private val clockText = textView(70f, Color.WHITE, Typeface.DEFAULT_BOLD)
     private val dateText = textView(16f, Color.argb(220, 255, 255, 255), Typeface.DEFAULT)
@@ -122,20 +128,33 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
         roll: Float,
         @Suppress("UNUSED_PARAMETER") yaw: Float
     ) {
+        if (!parallaxEnabled) {
+            targetY = 0f
+            targetBlurStrength = 0f
+            return
+        }
         targetY = (-roll * COMPENSATION_STRENGTH).coerceIn(
             -MAX_UI_ROTATION_DEGREES,
             MAX_UI_ROTATION_DEGREES
         )
-        targetBlurStrength = (abs(roll) / RECENTER_THRESHOLD_DEGREES).coerceIn(0f, 1f)
+        targetBlurStrength = (
+            (abs(roll) - BLUR_START_DEGREES) /
+                (RECENTER_THRESHOLD_DEGREES - BLUR_START_DEGREES)
+            ).coerceIn(0f, 1f)
     }
 
     fun setSensorStatus(message: String, full3d: Boolean) {
+        if (!parallaxEnabled) {
+            sensorText.text = "Parallax disabled"
+            return
+        }
         sensorText.text = if (full3d) "●  $message" else "◐  $message"
     }
 
     fun setIsDefaultHome(isDefault: Boolean) {
         if (::setHomeButton.isInitialized) {
-            setHomeButton.visibility = if (isDefault) View.GONE else View.VISIBLE
+            setHomeButton.visibility = View.VISIBLE
+            setHomeButton.text = if (isDefault) "CHANGE HOME APP" else "SET AS HOME"
         }
     }
 
@@ -257,7 +276,7 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
             addView(appStrip, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
         }
         column.addView(appScroller, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(90)))
-        column.addView(space(126))
+        column.addView(space(174))
         rebuildSelectedApps()
     }
 
@@ -302,6 +321,13 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
         }, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
         fixedControls.addView(customizeRow, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
+        fixedControls.addView(space(8))
+        effectButton = controlButton("", Color.rgb(23, 94, 103), Color.WHITE) {
+            toggleParallax()
+        }
+        updateEffectButton()
+        fixedControls.addView(effectButton, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+
         addView(fixedControls, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
             gravity = Gravity.BOTTOM
             leftMargin = dp(18)
@@ -321,6 +347,51 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
             isFocusable = true
             setOnClickListener { action() }
         }
+
+    private fun toggleParallax() {
+        parallaxEnabled = !parallaxEnabled
+        context.getSharedPreferences(APP_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(PARALLAX_ENABLED_KEY, parallaxEnabled)
+            .apply()
+        updateEffectButton()
+
+        if (!parallaxEnabled) {
+            clearParallaxImmediately()
+            sensorText.text = "Parallax disabled"
+            Toast.makeText(context, "Parallax effect disabled", Toast.LENGTH_SHORT).show()
+        } else {
+            sensorText.text = "Recentered"
+            Toast.makeText(context, "Parallax effect enabled", Toast.LENGTH_SHORT).show()
+        }
+        onParallaxEnabledChanged(parallaxEnabled)
+    }
+
+    private fun updateEffectButton() {
+        if (!::effectButton.isInitialized) return
+        effectButton.text = if (parallaxEnabled) "PARALLAX EFFECT: ON" else "PARALLAX EFFECT: OFF"
+        effectButton.background = roundedBackground(
+            if (parallaxEnabled) Color.rgb(23, 94, 103) else Color.rgb(65, 72, 84),
+            100f,
+            Color.argb(65, 255, 255, 255)
+        )
+    }
+
+    private fun clearParallaxImmediately() {
+        targetY = 0f
+        currentY = 0f
+        targetBlurStrength = 0f
+        currentBlurStrength = 0f
+        floatingLayer.rotationX = 0f
+        floatingLayer.rotationY = 0f
+        floatingLayer.rotation = 0f
+        floatingLayer.translationX = 0f
+        floatingLayer.translationY = 0f
+        atmosphere.translationX = 0f
+        atmosphere.translationY = 0f
+        blurEffect?.update(0f) ?: blurFallback.setStrength(0f)
+        onBlurStrengthChanged(0f)
+    }
 
     private fun showAppPicker() {
         val launcherIntent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
@@ -550,7 +621,8 @@ private class WholeScreenBlurEffectController(
             return
         }
         val steppedStrength = bucket / 20f
-        val radius = density * (4f + 26f * steppedStrength)
+        // A restrained maximum keeps launcher labels and widgets readable.
+        val radius = density * (1.5f + 5.5f * steppedStrength)
         target.setRenderEffect(RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP))
     }
 }
@@ -574,7 +646,7 @@ private class WholeScreenBlurFallback(context: Context) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         if (strength < 0.02f) return
-        paint.color = Color.argb((110f * strength).toInt(), 205, 225, 238)
+        paint.color = Color.argb((32f * strength).toInt(), 205, 225, 238)
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
     }
 }
