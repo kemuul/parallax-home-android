@@ -186,7 +186,7 @@ The effect is GPU-composited by Android; the app does not redraw the whole UI on
 
 ### Download a ready-built APK
 
-Open the project's [GitHub Releases page](https://github.com/kemuul/parallax-home-android/releases/latest) on the Android phone, expand **Assets**, and download `Parallax-Home-v0.8.0-beta.apk`. If Android asks, allow the browser or file manager to **Install unknown apps**, then open the downloaded APK and tap **Install**. After installation, open **Settings -> Apps -> Default apps -> Home app** and select **Parallax Home**.
+Open the project's [GitHub Releases page](https://github.com/kemuul/parallax-home-android/releases) on the Android phone, open **Parallax Home v0.8.0 beta**, expand **Assets**, and download `Parallax-Home-v0.8.0-beta.apk`. If Android asks, allow the browser or file manager to **Install unknown apps**, then open the downloaded APK and tap **Install**. After installation, open **Settings -> Apps -> Default apps -> Home app** and select **Parallax Home**.
 
 Release APKs use the permanent application ID `io.github.kemuul.parallaxhome`. Every update must keep that ID, increase `versionCode`, and use the same private signing key.
 
