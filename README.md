@@ -140,7 +140,7 @@ The important declaration is already in `app/src/main/AndroidManifest.xml`:
 
 `CATEGORY_HOME` identifies the activity as a home screen. A separate `MAIN` + `LAUNCHER` filter leaves a normal icon available during development. Android's Intent reference defines `ACTION_MAIN` + `CATEGORY_HOME` as the home-screen activity: [Intent API reference](https://developer.android.com/reference/android/content/Intent#CATEGORY_HOME).
 
-Android does not allow this app to transform the Pixel, Samsung, Xiaomi, or another vendor launcher's interface. To see the effect on the actual Home screen, **Parallax Home itself must be selected as the default Home app**. It is a replacement launcher, not an overlay on the stock launcher. A live wallpaper could animate behind the stock launcher, but it could not tilt its icons, widgets, or controls. The fixed **SET AS HOME** button opens Android's protected Home-role chooser; Android deliberately requires you to approve this choice. If a manufacturer does not show that chooser, version 0.5 falls back to the phone's Default apps/Home app settings page.
+Android does not allow this app to transform the Pixel, Samsung, Xiaomi, or another vendor launcher's interface. To see the effect on the actual Home screen, **Parallax Home itself must be selected as the default Home app**. It is a replacement launcher, not an overlay on the stock launcher. A live wallpaper could animate behind the stock launcher, but it could not tilt its icons, widgets, or controls. The fixed **SET AS HOME** button opens Android's protected Home-role chooser; Android deliberately requires you to approve this choice. If a manufacturer does not show that chooser, version 0.6 falls back to the phone's Default apps/Home app settings page.
 
 No sensor runtime permission is needed. The manifest marks accelerometer and gyroscope hardware as optional so installation is not blocked on unusual devices; the code decides what is actually available.
 
@@ -162,7 +162,7 @@ For rotation-vector sensors, the tracker calculates:
 relativeRotation = transpose(referenceRotation) × currentRotation
 ```
 
-It converts that relative matrix to pitch, roll, and yaw. Version 0.5 deliberately uses only left/right roll. `LauncherScene.setTargetOrientation()` ignores pitch and yaw and maps a physical roll range of up to 85 degrees into a subtle visual rotation of up to 7 degrees. Phone moves sideways one way, foreground visually leans the other way.
+It converts that relative matrix to pitch, roll, and yaw. Version 0.6 deliberately uses only left/right roll. `LauncherScene.setTargetOrientation()` ignores pitch and yaw, applies 90% inverse compensation, and caps the UI at 42 degrees. A physical half tilt therefore produces about 40 degrees of visible perspective instead of the previous seven-degree limit.
 
 Sensor callbacks only update targets. Rendering happens once per display frame through `Choreographer`. A time-based exponential low-pass filter avoids jitter while behaving consistently on 60, 90, and 120 Hz screens:
 
@@ -180,9 +180,15 @@ smoothed += (target - smoothed) × blend
 - foreground and background translation in opposite directions to sell separation;
 - 1.035× scale so tiny blank corners do not appear during rotation.
 
-The effect is GPU-composited by Android; the app does not redraw the whole UI on every sensor event. Version 0.5 also draws a lightweight feathered blur/haze only along the left or right edge toward the physical tilt. Its width and opacity continue increasing across the full 85-degree physical range and disappear at center.
+The effect is GPU-composited by Android; the app does not redraw the whole UI on every sensor event. On Android 12 and newer, version 0.6 uses a masked GPU `RenderEffect` to blur the actual launcher content only along the edge toward the tilt. Android 8-11 use a stronger feathered fallback because the platform content-blur API is unavailable.
 
 ## 8. Install the APK on a physical phone
+
+### Download a ready-built APK
+
+Open the project's [GitHub Releases page](https://github.com/kemuul/parallax-home-android/releases/latest) on the Android phone, expand **Assets**, and download `Parallax-Home-v0.6.0-beta.apk`. If Android asks, allow the browser or file manager to **Install unknown apps**, then open the downloaded APK and tap **Install**. After installation, open **Settings -> Apps -> Default apps -> Home app** and select **Parallax Home**.
+
+Release APKs use the permanent application ID `io.github.kemuul.parallaxhome`. Every update must keep that ID, increase `versionCode`, and use the same private signing key.
 
 ### Which USB cable do I need?
 
@@ -205,7 +211,7 @@ Then run:
 ```powershell
 adb devices
 adb install -r .\app\build\outputs\apk\debug\app-debug.apk
-adb shell am start -n com.example.parallaxlauncher/.MainActivity
+adb shell am start -n io.github.kemuul.parallaxhome/com.example.parallaxlauncher.MainActivity
 ```
 
 Or use the included VS Code tasks:
@@ -235,7 +241,7 @@ USB is usually simpler for the first installation, but it is not mandatory on de
 
 Press the physical/gesture **Home** control. Select **Parallax Home** and initially choose **Just once**. Once satisfied, choose **Always**, or use **Settings → Apps → Default apps → Home app**. The exact menu name varies by manufacturer.
 
-Version 0.5 shows a fixed **SET AS HOME** button whenever Parallax Home does not hold Android's Home role. Tap it, choose **Parallax Home**, and approve the system dialog. If the dialog is unavailable or dismissed, the app opens **Default apps**, where you can select **Home app -> Parallax Home**. Android does not permit an app to make itself the default launcher without your confirmation.
+Version 0.6 shows a fixed **SET AS HOME** button whenever Parallax Home does not hold Android's Home role. Tap it, choose **Parallax Home**, and approve the system dialog. If the dialog is unavailable or dismissed, the app opens **Default apps**, where you can select **Home app -> Parallax Home**. Android does not permit an app to make itself the default launcher without your confirmation.
 
 To return to the original launcher, select it again in **Default apps → Home app**. Keep the stock launcher installed.
 
@@ -245,7 +251,7 @@ To return to the original launcher, select it again in **Default apps → Home a
 2. Open or return to Parallax Home and keep still while **Hold steady — calibrating** is displayed. It centers automatically.
 3. Tilt slowly left and right. The foreground should move oppositely while the atmosphere moves a smaller distance in the other direction. Forward/back movement should have no visual effect.
 4. If the initial pose is uncomfortable, tap the fixed **RECENTER** control. It no longer moves with the parallax layer, so it remains easy to hit while tilted.
-5. You can also hold the phone at any comfortable pose. If it stays within about 1 degree for five continuous seconds, that pose automatically becomes the new center. Meaningful movement resets the five-second timer, and each still pose is auto-centered only once.
+5. Automatic recentering now runs only when the phone is already within about 2 degrees of neutral and remains still for five continuous seconds. Holding a strongly tilted pose no longer erases the effect. Use **RECENTER** if you intentionally want a tilted holding pose to become neutral.
 6. Tilt toward the left or right edge and verify that the soft edge blur appears on that side and grows subtly with tilt. There is no top/bottom edge blur.
 7. Rotate between portrait and landscape. Android may recreate the activity and automatically establish a new neutral pose for the new screen axes.
 8. Watch the SIDE readout. Saturation at the configured limit is expected and prevents nausea-inducing motion.
@@ -254,8 +260,9 @@ Tune the constants at the top of `LauncherScene.kt`:
 
 | Constant | Effect |
 |---|---|
-| `MAX_PHYSICAL_ROLL_DEGREES` | Physical side-tilt range; version 0.5 accepts up to 85 degrees |
-| `MAX_Y_DEGREES` | Horizontal safety clamp; lower feels calmer |
+| `MAX_PHYSICAL_ROLL_DEGREES` | Physical side-tilt range; version 0.6 accepts up to 85 degrees |
+| `COMPENSATION_STRENGTH` | Fraction of physical roll applied inversely; currently 0.90 |
+| `MAX_UI_ROTATION_DEGREES` | Visible perspective cap; currently 42 degrees |
 | `SMOOTHING_TIME_SECONDS` | Higher is smoother but laggier; try 0.10–0.20 |
 
 If one axis feels reversed on a vendor device, remove or add the minus sign for that target in `setTargetOrientation()`. Change one axis at a time, rebuild with `assembleDebug`, and reinstall with `adb install -r`.
@@ -281,7 +288,7 @@ A sensible expansion order is:
 5. Add gestures, folders, long-press app info/uninstall shortcuts, and accessibility descriptions.
 6. Add widgets using `AppWidgetHost`; this is significantly more lifecycle/state work than static icons.
 7. Add rotation lock options, per-axis tuning controls, and stored calibration.
-8. Profile with `adb shell dumpsys gfxinfo com.example.parallaxlauncher` and Android Studio's profilers before adding blur or multiple animated layers.
+8. Profile with `adb shell dumpsys gfxinfo io.github.kemuul.parallaxhome` and Android Studio's profilers before adding blur or multiple animated layers.
 
 Android 11+ package visibility rules matter when building the app drawer. Prefer a manifest `<queries>` block for the launcher intent rather than immediately requesting broad package visibility. Publishing a full launcher also requires proper release signing, privacy disclosures, crash handling, backup/restore decisions, and extensive testing across OEM home-app pickers.
 

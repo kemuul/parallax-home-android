@@ -32,6 +32,7 @@ class OrientationTracker(
         private const val MIN_CALIBRATION_NANOS = 450_000_000L
         private const val AUTO_RECENTER_NANOS = 5_000_000_000L
         private const val STILLNESS_RADIUS_DEGREES = 1.0f
+        private const val AUTO_RECENTER_NEUTRAL_DEGREES = 2.0f
     }
 
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
@@ -263,6 +264,13 @@ class OrientationTracker(
     }
 
     private fun updateMatrixAutoRecenter(matrix: FloatArray, timestampNanos: Long) {
+        val activeReference = referenceMatrix ?: return
+        if (matrixAngleDegrees(activeReference, matrix) > AUTO_RECENTER_NEUTRAL_DEGREES) {
+            hasStillAnchorMatrix = false
+            matrixAutoCentered = false
+            return
+        }
+
         if (!hasStillAnchorMatrix) {
             matrix.copyInto(stillAnchorMatrix)
             hasStillAnchorMatrix = true
@@ -287,6 +295,17 @@ class OrientationTracker(
     }
 
     private fun updateGravityAutoRecenter(gravity: FloatArray, timestampNanos: Long) {
+        val activeReference = referenceGravity ?: return
+        val neutralDot = (activeReference[0] * gravity[0] +
+            activeReference[1] * gravity[1] +
+            activeReference[2] * gravity[2]).coerceIn(-1f, 1f)
+        val neutralDegrees = Math.toDegrees(acos(neutralDot.toDouble())).toFloat()
+        if (neutralDegrees > AUTO_RECENTER_NEUTRAL_DEGREES) {
+            hasStillAnchorGravity = false
+            gravityAutoCentered = false
+            return
+        }
+
         if (!hasStillAnchorGravity) {
             gravity.copyInto(stillAnchorGravity)
             hasStillAnchorGravity = true

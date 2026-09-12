@@ -2,13 +2,16 @@ package com.example.parallaxlauncher
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.BlendMode
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.RadialGradient
+import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.graphics.Typeface
+import android.os.Build
 import android.os.SystemClock
 import android.provider.MediaStore
 import android.net.Uri
@@ -26,13 +29,14 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.exp
-import kotlin.math.sqrt
+import kotlin.math.roundToInt
 
 class LauncherScene(context: Context) : FrameLayout(context), Choreographer.FrameCallback {
     companion object {
         // Start here when tuning on a real phone.
         private const val MAX_PHYSICAL_ROLL_DEGREES = 85f
-        private const val MAX_Y_DEGREES = 7f
+        private const val COMPENSATION_STRENGTH = 0.90f
+        private const val MAX_UI_ROTATION_DEGREES = 42f
         private const val SMOOTHING_TIME_SECONDS = 0.15f
     }
 
@@ -43,6 +47,11 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
     private val atmosphere = AtmosphereView(context)
     private val floatingLayer = FrameLayout(context)
     private val edgeBlur = TiltEdgeBlurView(context)
+    private val edgeBlurEffect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        EdgeBlurEffectController(floatingLayer, density)
+    } else {
+        null
+    }
     private val fixedControls = LinearLayout(context)
     private lateinit var setHomeButton: TextView
     private val clockText = textView(76f, Color.WHITE, Typeface.DEFAULT_BOLD)
@@ -71,6 +80,7 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
         addView(floatingLayer, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         buildContent()
         addView(edgeBlur, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        if (edgeBlurEffect != null) edgeBlur.visibility = View.GONE
         buildFixedControls()
 
         setOnApplyWindowInsetsListener { _, insets ->
@@ -98,15 +108,13 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
         roll: Float,
         @Suppress("UNUSED_PARAMETER") yaw: Float
     ) {
-        // Only left/right roll drives the effect. The physical range extends to
-        // 85 degrees, but it is curved into a subtle seven-degree UI rotation.
+        // Only left/right roll drives the effect. A half tilt now produces a
+        // clearly visible inverse perspective, capped before becoming edge-on.
         val normalizedRoll = (roll / MAX_PHYSICAL_ROLL_DEGREES).coerceIn(-1f, 1f)
-        val curvedRoll = if (normalizedRoll < 0f) {
-            -sqrt(-normalizedRoll)
-        } else {
-            sqrt(normalizedRoll)
-        }
-        targetY = -curvedRoll * MAX_Y_DEGREES
+        targetY = (-roll * COMPENSATION_STRENGTH).coerceIn(
+            -MAX_UI_ROTATION_DEGREES,
+            MAX_UI_ROTATION_DEGREES
+        )
         targetEdgeTilt = normalizedRoll
     }
 
@@ -146,11 +154,15 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
         floatingLayer.rotationX = 0f
         floatingLayer.rotationY = currentY
         floatingLayer.rotation = 0f
-        floatingLayer.translationX = currentY / MAX_Y_DEGREES * dp(10)
+        floatingLayer.translationX = currentY / MAX_UI_ROTATION_DEGREES * dp(18)
         floatingLayer.translationY = 0f
-        atmosphere.translationX = -currentY / MAX_Y_DEGREES * dp(4)
+        atmosphere.translationX = -currentY / MAX_UI_ROTATION_DEGREES * dp(7)
         atmosphere.translationY = 0f
-        edgeBlur.setTilt(currentEdgeTilt)
+        if (edgeBlurEffect != null) {
+            edgeBlurEffect.update(currentEdgeTilt, width, height)
+        } else {
+            edgeBlur.setTilt(currentEdgeTilt)
+        }
 
         updateTextIfNeeded()
         Choreographer.getInstance().postFrameCallback(this)
@@ -363,10 +375,73 @@ private class AtmosphereView(context: Context) : View(context) {
     }
 }
 
+/** Uses Android's GPU RenderEffect graph to blur only the edge toward the tilt. */
+private class EdgeBlurEffectController(
+    private val target: View,
+    private val density: Float
+) {
+    private var lastBucket = -1
+    private var lastDirection = 0
+    private var lastWidth = 0
+    private var lastHeight = 0
+
+    fun update(tilt: Float, width: Int, height: Int) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || width <= 0 || height <= 0) return
+
+        val strength = abs(tilt).coerceIn(0f, 1f)
+        val bucket = (strength * 24f).roundToInt()
+        val direction = when {
+            tilt > 0.01f -> 1
+            tilt < -0.01f -> -1
+            else -> 0
+        }
+        if (bucket == lastBucket && direction == lastDirection &&
+            width == lastWidth && height == lastHeight
+        ) return
+
+        lastBucket = bucket
+        lastDirection = direction
+        lastWidth = width
+        lastHeight = height
+
+        if (bucket == 0 || direction == 0) {
+            target.setRenderEffect(null)
+            return
+        }
+
+        val steppedStrength = bucket / 24f
+        val edgeWidth = width * (0.16f + 0.24f * steppedStrength)
+        val maskShader = if (direction > 0) {
+            LinearGradient(
+                width - edgeWidth, 0f, width.toFloat(), 0f,
+                intArrayOf(Color.TRANSPARENT, Color.argb(150, 255, 255, 255), Color.WHITE),
+                floatArrayOf(0f, 0.58f, 1f), Shader.TileMode.CLAMP
+            )
+        } else {
+            LinearGradient(
+                0f, 0f, edgeWidth, 0f,
+                intArrayOf(Color.WHITE, Color.argb(150, 255, 255, 255), Color.TRANSPARENT),
+                floatArrayOf(0f, 0.42f, 1f), Shader.TileMode.CLAMP
+            )
+        }
+
+        val blurRadius = density * (10f + 38f * steppedStrength)
+        val original = RenderEffect.createOffsetEffect(0f, 0f)
+        val blurred = RenderEffect.createBlurEffect(
+            blurRadius,
+            blurRadius,
+            Shader.TileMode.CLAMP
+        )
+        val mask = RenderEffect.createShaderEffect(maskShader)
+        val maskedBlur = RenderEffect.createBlendModeEffect(blurred, mask, BlendMode.DST_IN)
+        val composite = RenderEffect.createBlendModeEffect(original, maskedBlur, BlendMode.SRC_OVER)
+        target.setRenderEffect(composite)
+    }
+}
+
 /**
- * A cheap frosted-edge illusion. Only the edge toward the physical tilt is
- * drawn, and its feathered gradient becomes wider and brighter as tilt grows.
- * This avoids taking and blurring a full-screen bitmap on every sensor frame.
+ * Android 8-11 fallback for devices without RenderEffect. Newer devices use
+ * the true masked content blur above; this keeps an obvious directional cue.
  */
 private class TiltEdgeBlurView(context: Context) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -392,8 +467,8 @@ private class TiltEdgeBlurView(context: Context) : View(context) {
     private fun drawHorizontalEdge(canvas: Canvas) {
         val strength = abs(horizontalTilt)
         if (strength < 0.025f) return
-        val edgeWidth = width * (0.10f + 0.12f * strength)
-        val alpha = (105f * strength).toInt().coerceIn(0, 105)
+        val edgeWidth = width * (0.16f + 0.24f * strength)
+        val alpha = (190f * strength).toInt().coerceIn(0, 190)
         val haze = Color.argb(alpha, 174, 232, 255)
 
         if (horizontalTilt > 0f) {
