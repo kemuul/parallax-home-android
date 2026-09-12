@@ -40,6 +40,7 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
         private const val MAX_UI_ROTATION_DEGREES = 45f
         private const val BLUR_START_DEGREES = 38f
         private const val BLUR_FULL_DEGREES = 50f
+        private const val HINGE_SWITCH_DEADBAND_DEGREES = 0.25f
         private const val SMOOTHING_TIME_SECONDS = 0.15f
         private const val APP_PREFS = "launcher_apps"
         private const val APP_COMPONENTS_KEY = "selected_components"
@@ -79,6 +80,7 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
     private var currentY = 0f
     private var targetBlurStrength = 0f
     private var currentBlurStrength = 0f
+    private var leftHingeActive = true
     private var rendering = false
     private var previousFrameNanos = 0L
     private var lastClockSecond = -1L
@@ -91,8 +93,8 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
         addView(atmosphere, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
 
         floatingLayer.cameraDistance = 8_000f * density
-        floatingLayer.scaleX = 1.035f
-        floatingLayer.scaleY = 1.035f
+        floatingLayer.scaleX = 1f
+        floatingLayer.scaleY = 1f
         addView(floatingLayer, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         buildContent()
         buildFixedControls()
@@ -210,12 +212,23 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
         currentY += (targetY - currentY) * blend
         currentBlurStrength += (targetBlurStrength - currentBlurStrength) * blend
 
+        if (floatingLayer.width > 0 && floatingLayer.height > 0) {
+            if (currentY > HINGE_SWITCH_DEADBAND_DEGREES) {
+                leftHingeActive = true
+            } else if (currentY < -HINGE_SWITCH_DEADBAND_DEGREES) {
+                leftHingeActive = false
+            }
+            floatingLayer.pivotX = if (leftHingeActive) 0f else floatingLayer.width.toFloat()
+            floatingLayer.pivotY = floatingLayer.height * 0.5f
+        }
+
         floatingLayer.rotationX = 0f
         floatingLayer.rotationY = currentY
         floatingLayer.rotation = 0f
-        floatingLayer.translationX = currentY / MAX_UI_ROTATION_DEGREES * dp(18)
+        // The selected outer edge is the hinge; translation would make it slide.
+        floatingLayer.translationX = 0f
         floatingLayer.translationY = 0f
-        atmosphere.translationX = -currentY / MAX_UI_ROTATION_DEGREES * dp(7)
+        atmosphere.translationX = 0f
         atmosphere.translationY = 0f
 
         blurEffect?.update(currentBlurStrength) ?: blurFallback.setStrength(currentBlurStrength)
