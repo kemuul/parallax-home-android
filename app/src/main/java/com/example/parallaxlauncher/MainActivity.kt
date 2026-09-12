@@ -1,7 +1,10 @@
 package com.example.parallaxlauncher
 
 import android.app.Activity
+import android.app.WallpaperManager
 import android.app.role.RoleManager
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetManager
 import android.content.Intent
 import android.graphics.Color
 import android.os.Build
@@ -13,15 +16,26 @@ import android.widget.Toast
 class MainActivity : Activity() {
     companion object {
         private const val REQUEST_HOME_ROLE = 1001
+        private const val REQUEST_PICK_WIDGET = 2001
+        private const val REQUEST_CONFIGURE_WIDGET = 2002
+        private const val APP_WIDGET_HOST_ID = 7301
+        private const val WIDGET_PREFS = "launcher_widgets"
+        private const val WIDGET_IDS_KEY = "widget_ids"
     }
 
     private lateinit var scene: LauncherScene
     private lateinit var orientationTracker: OrientationTracker
+    private lateinit var appWidgetHost: AppWidgetHost
+    private lateinit var appWidgetManager: AppWidgetManager
+    private var pendingWidgetId = AppWidgetManager.INVALID_APPWIDGET_ID
+    private var lastWindowBlurRadius = -1
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         configureEdgeToEdge()
 
+        appWidgetManager = AppWidgetManager.getInstance(this)
+        appWidgetHost = AppWidgetHost(this, APP_WIDGET_HOST_ID)
         scene = LauncherScene(this)
         orientationTracker = OrientationTracker(
             context = this,
@@ -30,7 +44,21 @@ class MainActivity : Activity() {
         )
         scene.onRecenterRequested = orientationTracker::recenter
         scene.onSetAsHomeRequested = ::requestHomeRole
+        scene.onWallpaperRequested = ::openWallpaperPicker
+        scene.onAddWidgetRequested = ::pickWidget
+        scene.onRemoveWidgetRequested = ::removeWidget
+        scene.onBlurStrengthChanged = ::updateWindowBlur
         setContentView(scene)
+        restoreWidgets()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        try {
+            appWidgetHost.startListening()
+        } catch (_: Exception) {
+            Toast.makeText(this, "Widgets are unavailable on this device", Toast.LENGTH_SHORT).show()
+        }
     }
 
     override fun onResume() {
@@ -44,6 +72,11 @@ class MainActivity : Activity() {
         orientationTracker.stop()
         scene.stopRendering()
         super.onPause()
+    }
+
+    override fun onStop() {
+        appWidgetHost.stopListening()
+        super.onStop()
     }
 
     @Suppress("OVERRIDE_DEPRECATION")
@@ -75,11 +108,6 @@ class MainActivity : Activity() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 val roleManager = getSystemService(RoleManager::class.java)
                 if (roleManager.isRoleAvailable(RoleManager.ROLE_HOME)) {
-                    Toast.makeText(
-                        this,
-                        "Choose Parallax Home in the Android dialog",
-                        Toast.LENGTH_SHORT
-                    ).show()
                     @Suppress("DEPRECATION")
                     startActivityForResult(
                         roleManager.createRequestRoleIntent(RoleManager.ROLE_HOME),
@@ -115,28 +143,178 @@ class MainActivity : Activity() {
                 // Try the next, more general Settings destination.
             }
         }
+    }
 
-        Toast.makeText(
-            this,
-            "Open Settings -> Apps -> Default apps -> Home app",
-            Toast.LENGTH_LONG
-        ).show()
+    private fun openWallpaperPicker() {
+        try {
+            startActivity(Intent.createChooser(Intent(Intent.ACTION_SET_WALLPAPER), "Choose wallpaper"))
+        } catch (_: Exception) {
+            try {
+                startActivity(Intent(WallpaperManager.ACTION_LIVE_WALLPAPER_CHOOSER))
+            } catch (_: Exception) {
+                Toast.makeText(this, "No wallpaper picker is available", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun pickWidget() {
+        pendingWidgetId = appWidgetHost.allocateAppWidgetId()
+        val intent = Intent(AppWidgetManager.ACTION_APPWIDGET_PICK).putExtra(
+            AppWidgetManager.EXTRA_APPWIDGET_ID,
+            pendingWidgetId
+        )
+        try {
+            startActivityForResult(intent, REQUEST_PICK_WIDGET)
+        } catch (_: Exception) {
+            discardPendingWidget()
+            Toast.makeText(this, "No widget picker is available", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun configureWidget(widgetId: Int) {
+        val info = appWidgetManager.getAppWidgetInfo(widgetId)
+        if (info == null) {
+            discardWidget(widgetId)
+            return
+        }
+
+        val configureComponent = info.configure
+        if (configureComponent == null) {
+            finishAddingWidget(widgetId)
+            return
+        }
+
+        val intent = Intent(AppWidgetManager.ACTION_APPWIDGET_CONFIGURE).apply {
+            component = configureComponent
+            putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+        }
+        pendingWidgetId = widgetId
+        try {
+            startActivityForResult(intent, REQUEST_CONFIGURE_WIDGET)
+        } catch (_: Exception) {
+            finishAddingWidget(widgetId)
+        }
+    }
+
+    private fun finishAddingWidget(widgetId: Int) {
+        val info = appWidgetManager.getAppWidgetInfo(widgetId) ?: run {
+            discardWidget(widgetId)
+            return
+        }
+        val ids = storedWidgetIds().toMutableList()
+        if (widgetId !in ids) {
+            ids += widgetId
+            saveWidgetIds(ids)
+        }
+        val hostView = appWidgetHost.createView(this, widgetId, info)
+        hostView.setAppWidget(widgetId, info)
+        scene.addWidget(widgetId, hostView, info.loadLabel(packageManager) ?: "Widget")
+        pendingWidgetId = AppWidgetManager.INVALID_APPWIDGET_ID
+    }
+
+    private fun restoreWidgets() {
+        val validIds = mutableListOf<Int>()
+        for (widgetId in storedWidgetIds()) {
+            val info = appWidgetManager.getAppWidgetInfo(widgetId)
+            if (info == null) {
+                appWidgetHost.deleteAppWidgetId(widgetId)
+                continue
+            }
+            val hostView = appWidgetHost.createView(this, widgetId, info)
+            hostView.setAppWidget(widgetId, info)
+            scene.addWidget(widgetId, hostView, info.loadLabel(packageManager) ?: "Widget")
+            validIds += widgetId
+        }
+        saveWidgetIds(validIds)
+    }
+
+    private fun removeWidget(widgetId: Int) {
+        scene.removeWidget(widgetId)
+        appWidgetHost.deleteAppWidgetId(widgetId)
+        saveWidgetIds(storedWidgetIds().filterNot { it == widgetId })
+        Toast.makeText(this, "Widget removed", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun discardPendingWidget() {
+        if (pendingWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+            discardWidget(pendingWidgetId)
+        }
+    }
+
+    private fun discardWidget(widgetId: Int) {
+        if (widgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+            appWidgetHost.deleteAppWidgetId(widgetId)
+        }
+        pendingWidgetId = AppWidgetManager.INVALID_APPWIDGET_ID
+    }
+
+    private fun updateWindowBlur(strength: Float) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val radius = (resources.displayMetrics.density * 42f * strength.coerceIn(0f, 1f)).toInt()
+            if (radius == lastWindowBlurRadius) return
+            lastWindowBlurRadius = radius
+            window.setBackgroundBlurRadius(radius)
+        }
+    }
+
+    private fun storedWidgetIds(): List<Int> {
+        val encoded = getSharedPreferences(WIDGET_PREFS, MODE_PRIVATE)
+            .getString(WIDGET_IDS_KEY, "")
+            .orEmpty()
+        return encoded.split(',').mapNotNull { it.toIntOrNull() }
+    }
+
+    private fun saveWidgetIds(ids: List<Int>) {
+        getSharedPreferences(WIDGET_PREFS, MODE_PRIVATE)
+            .edit()
+            .putString(WIDGET_IDS_KEY, ids.distinct().joinToString(","))
+            .apply()
     }
 
     @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQUEST_HOME_ROLE) return
+        when (requestCode) {
+            REQUEST_HOME_ROLE -> {
+                val isHome = isDefaultHome()
+                scene.setIsDefaultHome(isHome)
+                Toast.makeText(
+                    this,
+                    if (isHome) "Parallax Home is now your Home screen"
+                    else "Home app was not changed. Select Parallax Home in Default apps.",
+                    Toast.LENGTH_LONG
+                ).show()
+                if (!isHome) openHomeSettings()
+            }
 
-        val isHome = isDefaultHome()
-        scene.setIsDefaultHome(isHome)
-        Toast.makeText(
-            this,
-            if (isHome) "Parallax Home is now your Home screen"
-            else "Home app was not changed. Select Parallax Home in Default apps.",
-            Toast.LENGTH_LONG
-        ).show()
-        if (!isHome) openHomeSettings()
+            REQUEST_PICK_WIDGET -> {
+                val widgetId = resultWidgetId(data)
+                if (resultCode == RESULT_OK && widgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+                    configureWidget(widgetId)
+                } else {
+                    discardWidget(widgetId)
+                }
+            }
+
+            REQUEST_CONFIGURE_WIDGET -> {
+                val widgetId = resultWidgetId(data)
+                if (resultCode == RESULT_OK && widgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+                    finishAddingWidget(widgetId)
+                } else {
+                    discardWidget(widgetId)
+                }
+            }
+        }
+    }
+
+    private fun resultWidgetId(data: Intent?): Int {
+        val returnedId = data?.getIntExtra(
+            AppWidgetManager.EXTRA_APPWIDGET_ID,
+            AppWidgetManager.INVALID_APPWIDGET_ID
+        ) ?: AppWidgetManager.INVALID_APPWIDGET_ID
+        return if (returnedId != AppWidgetManager.INVALID_APPWIDGET_ID) returnedId else pendingWidgetId
     }
 
     @Suppress("DEPRECATION")

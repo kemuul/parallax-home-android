@@ -8,6 +8,7 @@ import android.hardware.SensorManager
 import android.view.Surface
 import android.view.WindowManager
 import kotlin.math.acos
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.sqrt
 
@@ -33,6 +34,7 @@ class OrientationTracker(
         private const val AUTO_RECENTER_NANOS = 5_000_000_000L
         private const val STILLNESS_RADIUS_DEGREES = 1.0f
         private const val AUTO_RECENTER_NEUTRAL_DEGREES = 2.0f
+        private const val SIDE_RECENTER_THRESHOLD_DEGREES = 15f
     }
 
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
@@ -177,11 +179,18 @@ class OrientationTracker(
         multiplyTransposeLeft(reference, screenMatrix, relativeMatrix)
         SensorManager.getOrientation(relativeMatrix, orientation)
 
-        onOrientation(
-            Math.toDegrees(orientation[1].toDouble()).toFloat(),
-            Math.toDegrees(orientation[2].toDouble()).toFloat(),
-            Math.toDegrees(orientation[0].toDouble()).toFloat()
-        )
+        val pitchDegrees = Math.toDegrees(orientation[1].toDouble()).toFloat()
+        val rollDegrees = Math.toDegrees(orientation[2].toDouble()).toFloat()
+        val yawDegrees = Math.toDegrees(orientation[0].toDouble()).toFloat()
+        if (abs(rollDegrees) >= SIDE_RECENTER_THRESHOLD_DEGREES) {
+            referenceMatrix = screenMatrix.clone()
+            resetStillnessTracking()
+            onOrientation(0f, 0f, 0f)
+            onStatusChanged("15-degree limit centered - $activeSensorLabel", activeSensorIsFull3d)
+            return
+        }
+
+        onOrientation(pitchDegrees, rollDegrees, yawDegrees)
     }
 
     private fun beginStableCalibration(timestampNanos: Long) {
@@ -255,11 +264,17 @@ class OrientationTracker(
         if (axisLength < 0.0001f) {
             onOrientation(0f, 0f, 0f)
         } else {
-            onOrientation(
-                axisX / axisLength * angleDegrees,
-                axisY / axisLength * angleDegrees,
-                axisZ / axisLength * angleDegrees
-            )
+            val pitchDegrees = axisX / axisLength * angleDegrees
+            val rollDegrees = axisY / axisLength * angleDegrees
+            val yawDegrees = axisZ / axisLength * angleDegrees
+            if (abs(rollDegrees) >= SIDE_RECENTER_THRESHOLD_DEGREES) {
+                referenceGravity = screenGravity.clone()
+                resetStillnessTracking()
+                onOrientation(0f, 0f, 0f)
+                onStatusChanged("15-degree limit centered - $activeSensorLabel", activeSensorIsFull3d)
+                return
+            }
+            onOrientation(pitchDegrees, rollDegrees, yawDegrees)
         }
     }
 
