@@ -1,0 +1,15 @@
+.gradle/
+.gradle-user/
+.android-user/
+.compile-check*/
+.idea/
+.vscode/*.log
+.vscode/settings.json
+local.properties
+keystore.properties
+*.jks
+*.keystore
+**/build/
+*.iml
+*.apk
+captures/
