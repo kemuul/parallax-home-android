@@ -36,10 +36,10 @@ import kotlin.math.roundToInt
 
 class LauncherScene(context: Context) : FrameLayout(context), Choreographer.FrameCallback {
     companion object {
-        private const val RECENTER_THRESHOLD_DEGREES = 15f
-        private const val BLUR_START_DEGREES = 10f
-        private const val COMPENSATION_STRENGTH = 0.90f
-        private const val MAX_UI_ROTATION_DEGREES = 42f
+        private const val MAX_INPUT_ROLL_DEGREES = 50f
+        private const val MAX_UI_ROTATION_DEGREES = 45f
+        private const val BLUR_START_DEGREES = 38f
+        private const val BLUR_FULL_DEGREES = 50f
         private const val SMOOTHING_TIME_SECONDS = 0.15f
         private const val APP_PREFS = "launcher_apps"
         private const val APP_COMPONENTS_KEY = "selected_components"
@@ -133,19 +133,17 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
             targetBlurStrength = 0f
             return
         }
-        targetY = (-roll * COMPENSATION_STRENGTH).coerceIn(
-            -MAX_UI_ROTATION_DEGREES,
-            MAX_UI_ROTATION_DEGREES
-        )
+        val normalizedRoll = (roll / MAX_INPUT_ROLL_DEGREES).coerceIn(-1f, 1f)
+        targetY = -normalizedRoll * MAX_UI_ROTATION_DEGREES
         targetBlurStrength = (
             (abs(roll) - BLUR_START_DEGREES) /
-                (RECENTER_THRESHOLD_DEGREES - BLUR_START_DEGREES)
+                (BLUR_FULL_DEGREES - BLUR_START_DEGREES)
             ).coerceIn(0f, 1f)
     }
 
     fun setSensorStatus(message: String, full3d: Boolean) {
         if (!parallaxEnabled) {
-            sensorText.text = "Parallax disabled"
+            sensorText.text = context.getString(R.string.parallax_disabled)
             return
         }
         sensorText.text = if (full3d) "●  $message" else "◐  $message"
@@ -238,7 +236,7 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
             gravity = Gravity.CENTER_VERTICAL
         }
         header.addView(textView(13f, Color.WHITE, Typeface.DEFAULT_BOLD).apply {
-            text = "PARALLAX HOME"
+            text = context.getString(R.string.launcher_heading)
             letterSpacing = 0.18f
         }, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
         header.addView(sensorText)
@@ -264,7 +262,7 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
 
         column.addView(Space(context), LinearLayout.LayoutParams(1, 0, 1f))
         column.addView(textView(12f, Color.argb(200, 255, 255, 255), Typeface.DEFAULT_BOLD).apply {
-            text = "MY APPS  •  long-press an icon to remove it"
+            text = context.getString(R.string.my_apps_hint)
             letterSpacing = 0.08f
         })
         column.addView(space(10))
@@ -358,10 +356,10 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
 
         if (!parallaxEnabled) {
             clearParallaxImmediately()
-            sensorText.text = "Parallax disabled"
+            sensorText.text = context.getString(R.string.parallax_disabled)
             Toast.makeText(context, "Parallax effect disabled", Toast.LENGTH_SHORT).show()
         } else {
-            sensorText.text = "Recentered"
+            sensorText.text = context.getString(R.string.recentered)
             Toast.makeText(context, "Parallax effect enabled", Toast.LENGTH_SHORT).show()
         }
         onParallaxEnabledChanged(parallaxEnabled)
@@ -473,7 +471,7 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
 
         if (validComponents.isEmpty()) {
             appStrip.addView(textView(14f, Color.argb(210, 255, 255, 255), Typeface.DEFAULT).apply {
-                text = "Tap ADD APP to place shortcuts here"
+                text = context.getString(R.string.add_app_empty_hint)
                 setPadding(dp(12), dp(20), dp(12), dp(20))
             })
         }
@@ -557,7 +555,7 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
         val uptime = SystemClock.uptimeMillis()
         if (uptime - lastDebugUpdateMillis >= 120L) {
             lastDebugUpdateMillis = uptime
-            anglesText.text = String.format(Locale.US, "SIDE %+05.1f degrees  •  auto-center at ±15", currentY)
+            anglesText.text = String.format(Locale.US, "UI %+05.1f degrees  •  smooth limit ±45", currentY)
         }
     }
 
@@ -585,20 +583,29 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
 /** Transparent depth shading drawn over Android's selected system wallpaper. */
 private class AtmosphereView(context: Context) : View(context) {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private var backgroundGradient: LinearGradient? = null
+    private var glowGradient: RadialGradient? = null
 
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        paint.shader = LinearGradient(
+    override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
+        super.onSizeChanged(width, height, oldWidth, oldHeight)
+        if (width <= 0 || height <= 0) return
+        backgroundGradient = LinearGradient(
             0f, 0f, width.toFloat(), height.toFloat(),
             intArrayOf(Color.argb(145, 6, 16, 30), Color.argb(105, 13, 42, 65), Color.argb(145, 9, 20, 37)),
             null, Shader.TileMode.CLAMP
         )
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
-
-        paint.shader = RadialGradient(
+        glowGradient = RadialGradient(
             width * 0.83f, height * 0.2f, width * 0.55f,
             Color.argb(85, 46, 195, 215), Color.TRANSPARENT, Shader.TileMode.CLAMP
         )
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        paint.shader = backgroundGradient
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
+
+        paint.shader = glowGradient
         canvas.drawCircle(width * 0.83f, height * 0.2f, width * 0.55f, paint)
         paint.shader = null
     }

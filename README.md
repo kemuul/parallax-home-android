@@ -2,7 +2,7 @@
 
 This repository is a working, dependency-light Android Home app written in Kotlin. Install it, choose **Parallax Home** as the Home app, hold the phone at a comfortable angle, tap **RECENTER**, and gently tilt it left or right. The foreground applies a smooth inverse horizontal rotation while the atmosphere stays fixed, producing a floating-layer illusion.
 
-Version 0.8 adds a persistent **PARALLAX EFFECT: ON/OFF** control. Blur stays completely off below 10 degrees of side tilt, then rises gently until the 15-degree recenter point; its maximum strength is intentionally light enough to keep text and icons readable. The launcher also includes persistent user-selected app shortcuts, Android home-screen widgets, and the system wallpaper picker.
+Version 0.9 removes the abrupt 15-degree sensor reset that prevented the intended wide motion. Physical side tilt now maps smoothly across a ±50-degree input range to a restrained ±45-degree UI rotation. Blur remains off through normal movement and appears lightly only from 38 to 50 degrees. Manual recenter, five-second near-neutral drift correction, and the persistent **PARALLAX EFFECT: ON/OFF** control remain available.
 
 ## What software can and cannot do
 
@@ -162,7 +162,7 @@ For rotation-vector sensors, the tracker calculates:
 relativeRotation = transpose(referenceRotation) × currentRotation
 ```
 
-It converts that relative matrix to pitch, roll, and yaw. Version 0.8 deliberately uses only left/right roll. `LauncherScene.setTargetOrientation()` ignores pitch and yaw and applies 90% inverse compensation. Whenever relative roll reaches +15 or -15 degrees, `OrientationTracker` immediately makes that pose the new center, so the visible layer returns smoothly toward zero.
+It converts that relative matrix to pitch, roll, and yaw. Version 0.9 deliberately uses only left/right roll. `LauncherScene.setTargetOrientation()` ignores pitch and yaw, maps physical roll from -50 to +50 degrees into opposite UI rotation from +45 to -45 degrees, and clamps smoothly outside that range. It no longer changes the sensor reference merely because the phone reaches a side angle. **RECENTER** still establishes a new reference immediately, while the five-second correction only removes small drift when the phone is already close to neutral and steady.
 
 Sensor callbacks only update targets. Rendering happens once per display frame through `Choreographer`. A time-based exponential low-pass filter avoids jitter while behaving consistently on 60, 90, and 120 Hz screens:
 
@@ -180,13 +180,13 @@ smoothed += (target - smoothed) × blend
 - foreground and background translation in opposite directions to sell separation;
 - 1.035× scale so tiny blank corners do not appear during rotation.
 
-The effect is GPU-composited by Android; the app does not redraw the whole UI on every sensor event. On Android 12 and newer, version 0.8 applies a light GPU `RenderEffect` to the entire launcher only after side tilt exceeds 10 degrees and also requests a small background-window blur for the wallpaper. Android 8-11 use a light whole-screen frosted fallback because the platform blur API is unavailable. Tap **PARALLAX EFFECT: OFF** to immediately remove both motion and blur; the setting is remembered after restarts.
+The effect is GPU-composited by Android; the app does not redraw the whole UI on every sensor event. On Android 12 and newer, version 0.9 applies a light GPU `RenderEffect` only after side tilt exceeds 38 degrees and reaches its readable maximum at 50 degrees. Android 8-11 use a light whole-screen frosted fallback because the platform blur API is unavailable. Tap **PARALLAX EFFECT: OFF** to immediately remove both motion and blur; the setting is remembered after restarts.
 
 ## 8. Install the APK on a physical phone
 
 ### Download a ready-built APK
 
-Open the project's [GitHub Releases page](https://github.com/kemuul/parallax-home-android/releases) on the Android phone, open **Parallax Home v0.8.0 beta**, expand **Assets**, and download `Parallax-Home-v0.8.0-beta.apk`. If Android asks, allow the browser or file manager to **Install unknown apps**, then open the downloaded APK and tap **Install**. After installation, open **Settings -> Apps -> Default apps -> Home app** and select **Parallax Home**.
+Open the project's [GitHub Releases page](https://github.com/kemuul/parallax-home-android/releases) on the Android phone, open **Parallax Home v0.9.0 beta**, expand **Assets**, and download `Parallax-Home-v0.9.0-beta.apk`. If Android asks, allow the browser or file manager to **Install unknown apps**, then open the downloaded APK and tap **Install**. After installation, open **Settings -> Apps -> Default apps -> Home app** and select **Parallax Home**.
 
 Release APKs use the permanent application ID `io.github.kemuul.parallaxhome`. Every update must keep that ID, increase `versionCode`, and use the same private signing key.
 
@@ -251,8 +251,8 @@ To return to the original launcher, select it again in **Default apps → Home a
 2. Open or return to Parallax Home and keep still while **Hold steady — calibrating** is displayed. It centers automatically.
 3. Tilt slowly left and right. The foreground should move oppositely while the atmosphere moves a smaller distance in the other direction. Forward/back movement should have no visual effect.
 4. If the initial pose is uncomfortable, tap the fixed **RECENTER** control. It no longer moves with the parallax layer, so it remains easy to hit while tilted.
-5. Tilt until the sensor reaches +15 or -15 degrees. That pose becomes the new center immediately; this is separate from the five-second near-neutral drift correction.
-6. Below 10 degrees, verify that the screen remains sharp. From 10 to 15 degrees, the entire launcher should gain only a soft blur and remain readable.
+5. Continue toward ±50 degrees. The UI should keep moving smoothly instead of jumping back to center, reaching about 45 degrees of opposite visual rotation at the edge.
+6. Below 38 degrees, verify that the screen remains sharp. From 38 to 50 degrees, the entire launcher should gain only a soft blur and remain readable.
 7. Tap **PARALLAX EFFECT: OFF**. Rotation and blur should clear immediately. Return Home or restart the launcher to verify that OFF is remembered; tap it again to enable and recenter at the current pose.
 8. Tap **CHANGE HOME APP** and verify that Android lets you select your original launcher. You can return to Parallax Home from that same settings screen.
 9. Rotate between portrait and landscape. Android may recreate the activity and automatically establish a new neutral pose for the new screen axes.
@@ -262,10 +262,10 @@ Tune the constants at the top of `LauncherScene.kt`:
 
 | Constant | Effect |
 |---|---|
-| `BLUR_START_DEGREES` | Blur is completely off until 10 degrees of side tilt |
-| `RECENTER_THRESHOLD_DEGREES` | Light blur reaches its maximum by 15 degrees; the tracker also recenters at ±15 |
-| `COMPENSATION_STRENGTH` | Fraction of physical roll applied inversely; currently 0.90 |
-| `MAX_UI_ROTATION_DEGREES` | Visible perspective cap; currently 42 degrees |
+| `MAX_INPUT_ROLL_DEGREES` | Physical side angle that reaches the visual limit; currently 50 degrees |
+| `MAX_UI_ROTATION_DEGREES` | Opposite-facing UI perspective cap; currently 45 degrees |
+| `BLUR_START_DEGREES` | Blur is completely off until 38 degrees of side tilt |
+| `BLUR_FULL_DEGREES` | Light blur reaches its maximum at 50 degrees |
 | `SMOOTHING_TIME_SECONDS` | Higher is smoother but laggier; try 0.10–0.20 |
 
 If one axis feels reversed on a vendor device, remove or add the minus sign for that target in `setTargetOrientation()`. Change one axis at a time, rebuild with `assembleDebug`, and reinstall with `adb install -r`.
