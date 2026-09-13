@@ -5,18 +5,13 @@ import android.appwidget.AppWidgetHostView
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.LinearGradient
-import android.graphics.Paint
-import android.graphics.RadialGradient
 import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.os.Build
 import android.view.Choreographer
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.View
 import android.view.WindowInsets
 import android.widget.FrameLayout
@@ -56,18 +51,17 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
     var onParallaxEnabledChanged: (Boolean) -> Unit = {}
 
     private val density = resources.displayMetrics.density
-    private val atmosphere = AtmosphereView(context)
     private val floatingLayer = FrameLayout(context)
     private val widgetStrip = LinearLayout(context)
     private val widgetScroller = HorizontalScrollView(context)
     private val appStrip = LinearLayout(context)
     private val appScroller = HorizontalScrollView(context)
     private val fixedControls = LinearLayout(context)
-    private val blurFallback = WholeScreenBlurFallback(context)
     private val widgetViews = mutableMapOf<Int, View>()
     private var blurEffect: WholeScreenBlurEffectController? = null
     private lateinit var setHomeButton: TextView
     private lateinit var effectButton: TextView
+    private lateinit var controlsButton: TextView
     private var parallaxEnabled = context.getSharedPreferences(APP_PREFS, Context.MODE_PRIVATE)
         .getBoolean(PARALLAX_ENABLED_KEY, true)
 
@@ -81,17 +75,10 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
     private var rendering = false
     private var previousFrameNanos = 0L
     private var lastClockSecond = -1L
-    private var gestureDownX = 0f
-    private var gestureDownY = 0f
-    private var trackingControlsGesture = false
     private var controlsVisible = false
 
     init {
         setBackgroundColor(Color.TRANSPARENT)
-        atmosphere.scaleX = 1.04f
-        atmosphere.scaleY = 1.04f
-        addView(atmosphere, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-
         floatingLayer.cameraDistance = 8_000f * density
         floatingLayer.scaleX = 1f
         floatingLayer.scaleY = 1f
@@ -99,9 +86,7 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
         buildContent()
         buildFixedControls()
 
-        addView(blurFallback, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            blurFallback.visibility = View.GONE
             blurEffect = WholeScreenBlurEffectController(this, density)
         }
 
@@ -119,8 +104,10 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
                 bottom = insets.systemWindowInsetBottom
             }
             floatingLayer.setPadding(dp(24), top + dp(20), dp(24), bottom + dp(18))
-            (fixedControls.layoutParams as LayoutParams).bottomMargin = bottom + dp(12)
+            (fixedControls.layoutParams as LayoutParams).bottomMargin = bottom + dp(72)
             fixedControls.requestLayout()
+            (controlsButton.layoutParams as LayoutParams).bottomMargin = bottom + dp(12)
+            controlsButton.requestLayout()
             insets
         }
     }
@@ -148,32 +135,6 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
         @Suppress("UNUSED_PARAMETER") full3d: Boolean
     ) = Unit
 
-    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                gestureDownX = event.x
-                gestureDownY = event.y
-                trackingControlsGesture = true
-            }
-
-            MotionEvent.ACTION_UP -> {
-                if (trackingControlsGesture) {
-                    val horizontalDistance = event.x - gestureDownX
-                    val verticalDistance = event.y - gestureDownY
-                    val isHorizontalSwipe = abs(horizontalDistance) >= dp(72) &&
-                        abs(horizontalDistance) > abs(verticalDistance) * 1.25f
-                    if (isHorizontalSwipe) {
-                        if (horizontalDistance < 0f) showControls() else hideControls()
-                    }
-                }
-                trackingControlsGesture = false
-            }
-
-            MotionEvent.ACTION_CANCEL -> trackingControlsGesture = false
-        }
-        return super.dispatchTouchEvent(event)
-    }
-
     fun setIsDefaultHome(isDefault: Boolean) {
         if (::setHomeButton.isInitialized) {
             setHomeButton.visibility = View.VISIBLE
@@ -191,7 +152,7 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
 
         val card = FrameLayout(context).apply {
             tag = widgetId
-            background = roundedBackground(Color.argb(40, 0, 0, 0), 24f, Color.argb(65, 255, 255, 255))
+            background = roundedBackground(Color.TRANSPARENT, 24f, Color.argb(65, 255, 255, 255))
             setPadding(dp(6), dp(6), dp(6), dp(6))
             addView(hostView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
             setOnLongClickListener {
@@ -251,10 +212,7 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
         // The selected outer edge is the hinge; translation would make it slide.
         floatingLayer.translationX = 0f
         floatingLayer.translationY = 0f
-        atmosphere.translationX = 0f
-        atmosphere.translationY = 0f
-
-        blurEffect?.update(currentBlurStrength) ?: blurFallback.setStrength(currentBlurStrength)
+        blurEffect?.update(currentBlurStrength)
         onBlurStrengthChanged(currentBlurStrength)
         updateTextIfNeeded()
         Choreographer.getInstance().postFrameCallback(this)
@@ -299,19 +257,19 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setPadding(dp(8), dp(8), dp(8), dp(8))
-            background = roundedBackground(Color.argb(185, 7, 17, 31), 24f, Color.argb(60, 255, 255, 255))
+            setBackgroundColor(Color.TRANSPARENT)
         }
 
         val primaryRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
-        primaryRow.addView(controlButton("RECENTER", Color.rgb(125, 231, 255), Color.rgb(7, 17, 31)) {
+        primaryRow.addView(controlButton("RECENTER", Color.WHITE) {
             onRecenterRequested()
             Toast.makeText(context, "Current angle is now neutral", Toast.LENGTH_SHORT).show()
         }, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
         primaryRow.addView(space(8))
-        setHomeButton = controlButton("SET AS HOME", Color.rgb(48, 80, 120), Color.WHITE) {
+        setHomeButton = controlButton("SET AS HOME", Color.WHITE) {
             onSetAsHomeRequested()
         }
         primaryRow.addView(setHomeButton, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1.2f))
@@ -322,21 +280,21 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
-        customizeRow.addView(controlButton("WALLPAPER", Color.rgb(44, 62, 86), Color.WHITE) {
+        customizeRow.addView(controlButton("WALLPAPER", Color.WHITE) {
             onWallpaperRequested()
         }, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
         customizeRow.addView(space(6))
-        customizeRow.addView(controlButton("ADD APP", Color.rgb(44, 62, 86), Color.WHITE) {
+        customizeRow.addView(controlButton("ADD APP", Color.WHITE) {
             showAppPicker()
         }, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
         customizeRow.addView(space(6))
-        customizeRow.addView(controlButton("ADD WIDGET", Color.rgb(44, 62, 86), Color.WHITE) {
+        customizeRow.addView(controlButton("ADD WIDGET", Color.WHITE) {
             onAddWidgetRequested()
         }, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
         fixedControls.addView(customizeRow, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
         fixedControls.addView(space(8))
-        effectButton = controlButton("", Color.rgb(23, 94, 103), Color.WHITE) {
+        effectButton = controlButton("", Color.WHITE) {
             toggleParallax()
         }
         updateEffectButton()
@@ -346,10 +304,25 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
             gravity = Gravity.BOTTOM
             leftMargin = dp(18)
             rightMargin = dp(18)
-            bottomMargin = dp(12)
+            bottomMargin = dp(72)
         })
         fixedControls.visibility = View.INVISIBLE
         fixedControls.alpha = 0f
+
+        controlsButton = textView(24f, Color.WHITE, Typeface.DEFAULT).apply {
+            text = context.getString(R.string.controls_open_symbol)
+            gravity = Gravity.CENTER
+            contentDescription = context.getString(R.string.open_launcher_controls)
+            background = roundedBackground(Color.TRANSPARENT, 100f, Color.argb(120, 255, 255, 255))
+            isClickable = true
+            isFocusable = true
+            setOnClickListener { if (controlsVisible) hideControls() else showControls() }
+        }
+        addView(controlsButton, LayoutParams(dp(48), dp(48)).apply {
+            gravity = Gravity.BOTTOM or Gravity.END
+            rightMargin = dp(18)
+            bottomMargin = dp(12)
+        })
     }
 
     private fun showControls() {
@@ -357,14 +330,15 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
         controlsVisible = true
         fixedControls.animate().cancel()
         fixedControls.visibility = View.VISIBLE
-        if (fixedControls.translationX == 0f) {
-            fixedControls.translationX = (fixedControls.width + dp(36)).toFloat()
-        }
+        fixedControls.translationY = dp(12).toFloat()
+        fixedControls.alpha = 0f
         fixedControls.animate()
-            .translationX(0f)
+            .translationY(0f)
             .alpha(1f)
-            .setDuration(240L)
+            .setDuration(200L)
             .start()
+        controlsButton.text = context.getString(R.string.controls_close_symbol)
+        controlsButton.contentDescription = context.getString(R.string.close_launcher_controls)
     }
 
     private fun hideControls() {
@@ -372,22 +346,24 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
         controlsVisible = false
         fixedControls.animate().cancel()
         fixedControls.animate()
-            .translationX((fixedControls.width + dp(36)).toFloat())
+            .translationY(dp(12).toFloat())
             .alpha(0f)
-            .setDuration(220L)
+            .setDuration(180L)
             .withEndAction {
                 if (!controlsVisible) fixedControls.visibility = View.INVISIBLE
             }
             .start()
+        controlsButton.text = context.getString(R.string.controls_open_symbol)
+        controlsButton.contentDescription = context.getString(R.string.open_launcher_controls)
     }
 
-    private fun controlButton(label: String, fill: Int, textColor: Int, action: () -> Unit): TextView =
+    private fun controlButton(label: String, textColor: Int, action: () -> Unit): TextView =
         textView(12f, textColor, Typeface.DEFAULT_BOLD).apply {
             text = label
             gravity = Gravity.CENTER
             letterSpacing = 0.07f
             setPadding(dp(9), dp(11), dp(9), dp(11))
-            background = roundedBackground(fill, 100f, Color.argb(65, 255, 255, 255))
+            background = roundedBackground(Color.TRANSPARENT, 100f, Color.argb(120, 255, 255, 255))
             isClickable = true
             isFocusable = true
             setOnClickListener { action() }
@@ -414,9 +390,9 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
         if (!::effectButton.isInitialized) return
         effectButton.text = if (parallaxEnabled) "PARALLAX EFFECT: ON" else "PARALLAX EFFECT: OFF"
         effectButton.background = roundedBackground(
-            if (parallaxEnabled) Color.rgb(23, 94, 103) else Color.rgb(65, 72, 84),
+            Color.TRANSPARENT,
             100f,
-            Color.argb(65, 255, 255, 255)
+            Color.argb(120, 255, 255, 255)
         )
     }
 
@@ -430,9 +406,7 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
         floatingLayer.rotation = 0f
         floatingLayer.translationX = 0f
         floatingLayer.translationY = 0f
-        atmosphere.translationX = 0f
-        atmosphere.translationY = 0f
-        blurEffect?.update(0f) ?: blurFallback.setStrength(0f)
+        blurEffect?.update(0f)
         onBlurStrengthChanged(0f)
     }
 
@@ -620,37 +594,6 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
     private fun dp(value: Int): Int = (value * density + 0.5f).toInt()
 }
 
-/** Transparent depth shading drawn over Android's selected system wallpaper. */
-private class AtmosphereView(context: Context) : View(context) {
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private var backgroundGradient: LinearGradient? = null
-    private var glowGradient: RadialGradient? = null
-
-    override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
-        super.onSizeChanged(width, height, oldWidth, oldHeight)
-        if (width <= 0 || height <= 0) return
-        backgroundGradient = LinearGradient(
-            0f, 0f, width.toFloat(), height.toFloat(),
-            intArrayOf(Color.argb(145, 6, 16, 30), Color.argb(105, 13, 42, 65), Color.argb(145, 9, 20, 37)),
-            null, Shader.TileMode.CLAMP
-        )
-        glowGradient = RadialGradient(
-            width * 0.83f, height * 0.2f, width * 0.55f,
-            Color.argb(85, 46, 195, 215), Color.TRANSPARENT, Shader.TileMode.CLAMP
-        )
-    }
-
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        paint.shader = backgroundGradient
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
-
-        paint.shader = glowGradient
-        canvas.drawCircle(width * 0.83f, height * 0.2f, width * 0.55f, paint)
-        paint.shader = null
-    }
-}
-
 /** True full-content blur on Android 12 and newer. */
 private class WholeScreenBlurEffectController(
     private val target: View,
@@ -671,29 +614,5 @@ private class WholeScreenBlurEffectController(
         // A restrained maximum keeps launcher labels and widgets readable.
         val radius = density * (1.5f + 5.5f * steppedStrength)
         target.setRenderEffect(RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP))
-    }
-}
-
-/** Whole-screen frosted fallback for Android 8-11, where RenderEffect is unavailable. */
-private class WholeScreenBlurFallback(context: Context) : View(context) {
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private var strength = 0f
-
-    init {
-        isClickable = false
-        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
-    }
-
-    fun setStrength(value: Float) {
-        val next = value.coerceIn(0f, 1f)
-        if (abs(next - strength) < 0.01f) return
-        strength = next
-        invalidate()
-    }
-
-    override fun onDraw(canvas: Canvas) {
-        if (strength < 0.02f) return
-        paint.color = Color.argb((32f * strength).toInt(), 205, 225, 238)
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
     }
 }

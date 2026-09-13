@@ -2,4 +2,8 @@
 <resources>
     <string name="app_name">Parallax Home</string>
     <string name="add_app_empty_hint">Tap ADD APP to place shortcuts here</string>
+    <string name="controls_open_symbol" translatable="false">☰</string>
+    <string name="controls_close_symbol" translatable="false">×</string>
+    <string name="open_launcher_controls">Open launcher controls</string>
+    <string name="close_launcher_controls">Close launcher controls</string>
 </resources>
