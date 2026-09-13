@@ -1,8 +1,8 @@
 # Parallax Home — minimal Android launcher prototype
 
-This repository is a working, dependency-light Android Home app written in Kotlin. Install it, choose **Parallax Home** as the Home app, hold the phone at a comfortable angle, tap **RECENTER**, and gently tilt it left or right. The foreground applies a smooth inverse horizontal rotation while the atmosphere stays fixed, producing a floating-layer illusion.
+This repository is a working, dependency-light Android Home app written in Kotlin. Install it, choose **Parallax Home** as the Home app, hold the phone at a comfortable angle, swipe left to open the controls, tap **RECENTER**, and gently tilt it left or right. The foreground applies a smooth inverse horizontal rotation while the atmosphere stays fixed, producing a floating-layer illusion.
 
-Version 0.10 uses a book-hinge transform: the outer edge appropriate to the current rotation stays fixed against the phone while the opposite edge moves inward. The previous whole-layer horizontal translation and overscale are removed, so the anchored edge does not slide. Physical side tilt still maps smoothly across a ±50-degree input range to a restrained ±45-degree UI rotation, with light blur only from 38 to 50 degrees.
+Version 0.11 removes the launcher title, sensor state, app-strip heading, and live angle readout for a cleaner Home screen. All setup buttons start hidden: swipe left across the Home screen to slide the control panel in from the right, then swipe right to hide it. The book-hinge parallax, ±50-degree input range, ±45-degree UI rotation, and late light blur remain unchanged.
 
 ## What software can and cannot do
 
@@ -140,7 +140,7 @@ The important declaration is already in `app/src/main/AndroidManifest.xml`:
 
 `CATEGORY_HOME` identifies the activity as a home screen. A separate `MAIN` + `LAUNCHER` filter leaves a normal icon available during development. Android's Intent reference defines `ACTION_MAIN` + `CATEGORY_HOME` as the home-screen activity: [Intent API reference](https://developer.android.com/reference/android/content/Intent#CATEGORY_HOME).
 
-Android does not allow this app to transform the Pixel, Samsung, Xiaomi, or another vendor launcher's interface. To see the effect on the actual Home screen, **Parallax Home itself must be selected as the default Home app**. It is a replacement launcher, not an overlay on the stock launcher. A live wallpaper could animate behind the stock launcher, but it could not tilt its icons, widgets, or controls. The fixed Home-app control opens Android's protected Home-role chooser or Home-app settings; Android deliberately requires you to approve both selecting Parallax Home and switching back to another launcher.
+Android does not allow this app to transform the Pixel, Samsung, Xiaomi, or another vendor launcher's interface. To see the effect on the actual Home screen, **Parallax Home itself must be selected as the default Home app**. It is a replacement launcher, not an overlay on the stock launcher. A live wallpaper could animate behind the stock launcher, but it could not tilt its icons, widgets, or controls. The Home-app control in the swipe panel opens Android's protected Home-role chooser or Home-app settings; Android deliberately requires you to approve both selecting Parallax Home and switching back to another launcher.
 
 No sensor runtime permission is needed. The manifest marks accelerometer and gyroscope hardware as optional so installation is not blocked on unusual devices; the code decides what is actually available.
 
@@ -152,7 +152,7 @@ No sensor runtime permission is needed. The manifest marks accelerometer and gyr
 2. `TYPE_ROTATION_VECTOR`: fused absolute orientation, often including magnetometer data.
 3. `TYPE_ACCELEROMETER`: reduced tilt-only fallback. It cannot observe rotation around the gravity vector, so it is not full 3D.
 
-Rotation matrices are remapped for portrait, both landscape directions, and upside-down portrait. At startup the status says **Hold steady — calibrating**. The tracker waits for about half a second and requires a run of stable sensor samples before accepting the neutral pose, so an opening animation or hand movement does not become the reference. **RECENTER** immediately replaces that reference with the current pose. See Android's [position-sensor documentation](https://developer.android.com/develop/sensors-and-location/sensors/sensors_position) for the rotation-vector coordinate model.
+Rotation matrices are remapped for portrait, both landscape directions, and upside-down portrait. The tracker waits for about half a second and requires a run of stable sensor samples before accepting the neutral pose, so an opening animation or hand movement does not become the reference. Version 0.11 deliberately shows no sensor-status label. **RECENTER** immediately replaces the reference with the current pose. See Android's [position-sensor documentation](https://developer.android.com/develop/sensors-and-location/sensors/sensors_position) for the rotation-vector coordinate model.
 
 ## 6. From sensor pose to smooth compensation
 
@@ -162,7 +162,7 @@ For rotation-vector sensors, the tracker calculates:
 relativeRotation = transpose(referenceRotation) × currentRotation
 ```
 
-It converts that relative matrix to pitch, roll, and yaw. Version 0.10 deliberately uses only left/right roll. `LauncherScene.setTargetOrientation()` ignores pitch and yaw, maps physical roll from -50 to +50 degrees into opposite UI rotation from +45 to -45 degrees, and clamps smoothly outside that range. It no longer changes the sensor reference merely because the phone reaches a side angle. **RECENTER** still establishes a new reference immediately, while the five-second correction only removes small drift when the phone is already close to neutral and steady.
+It converts that relative matrix to pitch, roll, and yaw. Version 0.11 deliberately uses only left/right roll. `LauncherScene.setTargetOrientation()` ignores pitch and yaw, maps physical roll from -50 to +50 degrees into opposite UI rotation from +45 to -45 degrees, and clamps smoothly outside that range. It no longer changes the sensor reference merely because the phone reaches a side angle. **RECENTER** still establishes a new reference immediately, while the five-second correction only removes small drift when the phone is already close to neutral and steady.
 
 Sensor callbacks only update targets. Rendering happens once per display frame through `Choreographer`. A time-based exponential low-pass filter avoids jitter while behaving consistently on 60, 90, and 120 Hz screens:
 
@@ -186,7 +186,7 @@ The effect is GPU-composited by Android; the app does not redraw the whole UI on
 
 ### Download a ready-built APK
 
-Open the project's [GitHub Releases page](https://github.com/kemuul/parallax-home-android/releases) on the Android phone, open **Parallax Home v0.10.0 beta**, expand **Assets**, and download `Parallax-Home-v0.10.0-beta.apk`. If Android asks, allow the browser or file manager to **Install unknown apps**, then open the downloaded APK and tap **Install**. After installation, open **Settings -> Apps -> Default apps -> Home app** and select **Parallax Home**.
+Open the project's [GitHub Releases page](https://github.com/kemuul/parallax-home-android/releases) on the Android phone, open **Parallax Home v0.11.0 beta**, expand **Assets**, and download `Parallax-Home-v0.11.0-beta.apk`. If Android asks, allow the browser or file manager to **Install unknown apps**, then open the downloaded APK and tap **Install**. After installation, open **Settings -> Apps -> Default apps -> Home app** and select **Parallax Home**.
 
 Release APKs use the permanent application ID `io.github.kemuul.parallaxhome`. Every update must keep that ID, increase `versionCode`, and use the same private signing key.
 
@@ -241,22 +241,22 @@ USB is usually simpler for the first installation, but it is not mandatory on de
 
 Press the physical/gesture **Home** control. Select **Parallax Home** and initially choose **Just once**. Once satisfied, choose **Always**, or use **Settings → Apps → Default apps → Home app**. The exact menu name varies by manufacturer.
 
-The fixed Home-app control says **SET AS HOME** before Parallax Home is selected. Once it is the default, the control changes to **CHANGE HOME APP**; tap it and select your original launcher in Android's Home-app settings to switch back. Android deliberately requires the user to approve either choice.
+The Home-app control in the swipe panel says **SET AS HOME** before Parallax Home is selected. Once it is the default, the control changes to **CHANGE HOME APP**; tap it and select your original launcher in Android's Home-app settings to switch back. Android deliberately requires the user to approve either choice.
 
 To return to the original launcher, select it again in **Default apps → Home app**. Keep the stock launcher installed.
 
 ## 9. Test and calibrate
 
 1. Hold the phone as you normally would while looking at it.
-2. Open or return to Parallax Home and keep still while **Hold steady — calibrating** is displayed. It centers automatically.
-3. Tilt slowly left and right. One outer edge of the foreground should remain fixed to the phone like a book hinge while the opposite edge moves inward. The hinge changes sides smoothly when the tilt direction reverses. Forward/back movement should have no visual effect.
-4. If the initial pose is uncomfortable, tap the fixed **RECENTER** control. It no longer moves with the parallax layer, so it remains easy to hit while tilted.
-5. Continue toward ±50 degrees. The UI should keep moving smoothly instead of jumping back to center, reaching about 45 degrees of opposite visual rotation at the edge.
-6. Below 38 degrees, verify that the screen remains sharp. From 38 to 50 degrees, the entire launcher should gain only a soft blur and remain readable.
-7. Tap **PARALLAX EFFECT: OFF**. Rotation and blur should clear immediately. Return Home or restart the launcher to verify that OFF is remembered; tap it again to enable and recenter at the current pose.
-8. Tap **CHANGE HOME APP** and verify that Android lets you select your original launcher. You can return to Parallax Home from that same settings screen.
-9. Rotate between portrait and landscape. Android may recreate the activity and automatically establish a new neutral pose for the new screen axes.
-10. Watch the SIDE readout. Saturation at the configured limit is expected and prevents nausea-inducing motion.
+2. Open or return to Parallax Home and keep still briefly while its hidden sensor tracker centers automatically.
+3. Swipe left across the Home screen. The hidden controls should slide in from the right; swipe right to hide them again.
+4. Tilt slowly left and right. One outer edge of the foreground should remain fixed to the phone like a book hinge while the opposite edge moves inward. The hinge changes sides smoothly when the tilt direction reverses. Forward/back movement should have no visual effect.
+5. If the initial pose is uncomfortable, open the controls and tap **RECENTER**.
+6. Continue toward ±50 degrees. The UI should keep moving smoothly instead of jumping back to center, reaching about 45 degrees of opposite visual rotation at the edge.
+7. Below 38 degrees, verify that the screen remains sharp. From 38 to 50 degrees, the entire launcher should gain only a soft blur and remain readable.
+8. Tap **PARALLAX EFFECT: OFF**. Rotation and blur should clear immediately. Return Home or restart the launcher to verify that OFF is remembered; tap it again to enable and recenter at the current pose.
+9. Tap **CHANGE HOME APP** and verify that Android lets you select your original launcher. You can return to Parallax Home from that same settings screen.
+10. Rotate between portrait and landscape. Android may recreate the activity and automatically establish a new neutral pose for the new screen axes.
 
 Tune the constants at the top of `LauncherScene.kt`:
 

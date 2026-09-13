@@ -14,9 +14,9 @@ import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.os.Build
-import android.os.SystemClock
 import android.view.Choreographer
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowInsets
 import android.widget.FrameLayout
@@ -73,9 +73,6 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
 
     private val clockText = textView(70f, Color.WHITE, Typeface.DEFAULT_BOLD)
     private val dateText = textView(16f, Color.argb(220, 255, 255, 255), Typeface.DEFAULT)
-    private val sensorText = textView(12f, Color.rgb(125, 231, 255), Typeface.DEFAULT_BOLD)
-    private val anglesText = textView(12f, Color.argb(190, 255, 255, 255), Typeface.MONOSPACE)
-
     private var targetY = 0f
     private var currentY = 0f
     private var targetBlurStrength = 0f
@@ -84,7 +81,10 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
     private var rendering = false
     private var previousFrameNanos = 0L
     private var lastClockSecond = -1L
-    private var lastDebugUpdateMillis = 0L
+    private var gestureDownX = 0f
+    private var gestureDownY = 0f
+    private var trackingControlsGesture = false
+    private var controlsVisible = false
 
     init {
         setBackgroundColor(Color.TRANSPARENT)
@@ -143,12 +143,35 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
             ).coerceIn(0f, 1f)
     }
 
-    fun setSensorStatus(message: String, full3d: Boolean) {
-        if (!parallaxEnabled) {
-            sensorText.text = context.getString(R.string.parallax_disabled)
-            return
+    fun setSensorStatus(
+        @Suppress("UNUSED_PARAMETER") message: String,
+        @Suppress("UNUSED_PARAMETER") full3d: Boolean
+    ) = Unit
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                gestureDownX = event.x
+                gestureDownY = event.y
+                trackingControlsGesture = true
+            }
+
+            MotionEvent.ACTION_UP -> {
+                if (trackingControlsGesture) {
+                    val horizontalDistance = event.x - gestureDownX
+                    val verticalDistance = event.y - gestureDownY
+                    val isHorizontalSwipe = abs(horizontalDistance) >= dp(72) &&
+                        abs(horizontalDistance) > abs(verticalDistance) * 1.25f
+                    if (isHorizontalSwipe) {
+                        if (horizontalDistance < 0f) showControls() else hideControls()
+                    }
+                }
+                trackingControlsGesture = false
+            }
+
+            MotionEvent.ACTION_CANCEL -> trackingControlsGesture = false
         }
-        sensorText.text = if (full3d) "●  $message" else "◐  $message"
+        return super.dispatchTouchEvent(event)
     }
 
     fun setIsDefaultHome(isDefault: Boolean) {
@@ -244,23 +267,9 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
         }
         floatingLayer.addView(column, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
 
-        val header = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        header.addView(textView(13f, Color.WHITE, Typeface.DEFAULT_BOLD).apply {
-            text = context.getString(R.string.launcher_heading)
-            letterSpacing = 0.18f
-        }, LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
-        header.addView(sensorText)
-        column.addView(header, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
-
-        column.addView(space(24))
         clockText.includeFontPadding = false
         column.addView(clockText)
         column.addView(dateText)
-        column.addView(space(10))
-        column.addView(anglesText)
 
         widgetStrip.orientation = LinearLayout.HORIZONTAL
         widgetStrip.gravity = Gravity.CENTER_VERTICAL
@@ -274,12 +283,6 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
         })
 
         column.addView(Space(context), LinearLayout.LayoutParams(1, 0, 1f))
-        column.addView(textView(12f, Color.argb(200, 255, 255, 255), Typeface.DEFAULT_BOLD).apply {
-            text = context.getString(R.string.my_apps_hint)
-            letterSpacing = 0.08f
-        })
-        column.addView(space(10))
-
         appStrip.orientation = LinearLayout.HORIZONTAL
         appStrip.gravity = Gravity.CENTER_VERTICAL
         appScroller.apply {
@@ -287,7 +290,7 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
             addView(appStrip, LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT))
         }
         column.addView(appScroller, LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(90)))
-        column.addView(space(174))
+        column.addView(space(24))
         rebuildSelectedApps()
     }
 
@@ -345,6 +348,37 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
             rightMargin = dp(18)
             bottomMargin = dp(12)
         })
+        fixedControls.visibility = View.INVISIBLE
+        fixedControls.alpha = 0f
+    }
+
+    private fun showControls() {
+        if (controlsVisible) return
+        controlsVisible = true
+        fixedControls.animate().cancel()
+        fixedControls.visibility = View.VISIBLE
+        if (fixedControls.translationX == 0f) {
+            fixedControls.translationX = (fixedControls.width + dp(36)).toFloat()
+        }
+        fixedControls.animate()
+            .translationX(0f)
+            .alpha(1f)
+            .setDuration(240L)
+            .start()
+    }
+
+    private fun hideControls() {
+        if (!controlsVisible) return
+        controlsVisible = false
+        fixedControls.animate().cancel()
+        fixedControls.animate()
+            .translationX((fixedControls.width + dp(36)).toFloat())
+            .alpha(0f)
+            .setDuration(220L)
+            .withEndAction {
+                if (!controlsVisible) fixedControls.visibility = View.INVISIBLE
+            }
+            .start()
     }
 
     private fun controlButton(label: String, fill: Int, textColor: Int, action: () -> Unit): TextView =
@@ -369,10 +403,8 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
 
         if (!parallaxEnabled) {
             clearParallaxImmediately()
-            sensorText.text = context.getString(R.string.parallax_disabled)
             Toast.makeText(context, "Parallax effect disabled", Toast.LENGTH_SHORT).show()
         } else {
-            sensorText.text = context.getString(R.string.recentered)
             Toast.makeText(context, "Parallax effect enabled", Toast.LENGTH_SHORT).show()
         }
         onParallaxEnabledChanged(parallaxEnabled)
@@ -565,11 +597,6 @@ class LauncherScene(context: Context) : FrameLayout(context), Choreographer.Fram
             dateText.text = SimpleDateFormat("EEEE, MMMM d", Locale.getDefault()).format(date)
         }
 
-        val uptime = SystemClock.uptimeMillis()
-        if (uptime - lastDebugUpdateMillis >= 120L) {
-            lastDebugUpdateMillis = uptime
-            anglesText.text = String.format(Locale.US, "UI %+05.1f degrees  •  smooth limit ±45", currentY)
-        }
     }
 
     private fun textView(sizeSp: Float, color: Int, face: Typeface): TextView = TextView(context).apply {
